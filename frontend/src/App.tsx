@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { fetchPresets, runSimulation, runComparison } from "./services/api";
 import type { ProcessInput, SimulationResponse, ComparisonResponse } from "./services/api";
 import { GanttChart } from "./components/GanttChart";
@@ -334,6 +334,15 @@ export default function App() {
                   placeholder="CPU Load (0.1-1.0)"
                   value={newIntensity}
                   onChange={(e) => setNewIntensity(Number(e.target.value))}
+                  className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  placeholder="Priority (1-10)"
+                  value={newPriority}
+                  onChange={(e) => setNewPriority(Number(e.target.value))}
                   className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200"
                 />
               </div>
