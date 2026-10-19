@@ -79,11 +79,38 @@ export async function fetchPresets() {
   return res.json();
 }
 
+export async function fetchDatasetsInfo() {
+  const res = await fetch(`${API_BASE}/api/datasets`);
+  if (!res.ok) throw new Error("Failed to load dataset citations");
+  return res.json();
+}
+
+const parseApiError = async (res: Response): Promise<string> => {
+  try {
+    const err = await res.json();
+    if (typeof err.detail === "string") {
+      return err.detail;
+    }
+    if (Array.isArray(err.detail)) {
+      return err.detail
+        .map((e: any) => `${e.loc?.slice(1).join(".") || "field"}: ${e.msg}`)
+        .join("\n");
+    }
+    if (err.detail) {
+      return JSON.stringify(err.detail);
+    }
+  } catch {
+    // Fallback if JSON parsing fails
+  }
+  return `Server error (${res.status}: ${res.statusText})`;
+};
+
 export async function runSimulation(payload: {
   processes: ProcessInput[];
   algorithm: string;
   time_quantum?: number;
   priority_preemptive?: boolean;
+  renewable_profile?: any;
 }): Promise<SimulationResponse> {
   const res = await fetch(`${API_BASE}/api/simulate`, {
     method: "POST",
@@ -91,8 +118,8 @@ export async function runSimulation(payload: {
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || "Simulation failed");
+    const errorMsg = await parseApiError(res);
+    throw new Error(errorMsg);
   }
   return res.json();
 }
@@ -101,6 +128,7 @@ export async function runComparison(payload: {
   processes: ProcessInput[];
   time_quantum?: number;
   priority_preemptive?: boolean;
+  renewable_profile?: string;
 }): Promise<ComparisonResponse> {
   const res = await fetch(`${API_BASE}/api/compare`, {
     method: "POST",
@@ -108,8 +136,8 @@ export async function runComparison(payload: {
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || "Comparison failed");
+    const errorMsg = await parseApiError(res);
+    throw new Error(errorMsg);
   }
   return res.json();
 }

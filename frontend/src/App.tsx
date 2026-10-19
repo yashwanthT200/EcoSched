@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { fetchPresets, runSimulation, runComparison } from "./services/api";
+import React, { useState, useEffect } from "react";
+import { fetchPresets, fetchDatasetsInfo, runSimulation, runComparison } from "./services/api";
 import type { ProcessInput, SimulationResponse, ComparisonResponse } from "./services/api";
 import { GanttChart } from "./components/GanttChart";
 import { TelemetryChart } from "./components/TelemetryChart";
@@ -14,58 +14,137 @@ import {
   Trash2, 
   Activity, 
   BarChart3, 
-  FileText 
+  FileText,
+  Database,
+  CheckCircle2
 } from "lucide-react";
 
 export default function App() {
+  const [presets, setPresets] = useState<any>(null);
+  const [datasetsInfo, setDatasetsInfo] = useState<any>(null);
+  const [selectedWorkloadPreset, setSelectedWorkloadPreset] = useState("spec_cpu_benchmarks");
+  const [selectedRenewableProfile, setSelectedRenewableProfile] = useState("caiso_real_solar_24h");
+
   const [processes, setProcesses] = useState<ProcessInput[]>([]);
   const [algorithm, setAlgorithm] = useState("ecosched");
   const [timeQuantum, setTimeQuantum] = useState(2);
   const [simulationResult, setSimulationResult] = useState<SimulationResponse | null>(null);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"charts" | "leaderboard" | "decisions">("charts");
+  const [activeTab, setActiveTab] = useState<"charts" | "leaderboard" | "decisions" | "datasets">("charts");
 
-  // New process form state
-  const [newPid, setNewPid] = useState("P6");
-  const [newName, setNewName] = useState("Custom Analytics");
-  const [newArrival, setNewArrival] = useState(3.0);
-  const [newBurst, setNewBurst] = useState(4.0);
-  const [newPriority, setNewPriority] = useState(3);
-  const [newType, setNewType] = useState<"critical" | "normal" | "flexible">("flexible");
-  const [newIntensity, setNewIntensity] = useState(0.7);
+  // Custom task form state
+  const [newPid, setNewPid] = useState("P99");
+  const [newName, setNewName] = useState("Custom Realtime Task");
+  const [newArrival, setNewArrival] = useState(2.0);
+  const [newBurst, setNewBurst] = useState(3.0);
+  const [newPriority, setNewPriority] = useState(2);
+  const [newType, setNewType] = useState<"critical" | "normal" | "flexible">("normal");
+  const [newIntensity, setNewIntensity] = useState(0.6);
 
-  // Auto-run initial simulation on load
+  // Helper to resolve renewable profile object for backend
+  const getRenewableProfilePayload = (profileKey: string, presetsData: any) => {
+    return presetsData?.renewable_profiles?.[profileKey] 
+      || presetsData?.solar_profiles?.[profileKey]
+      || { profile_name: profileKey, name: profileKey };
+  };
+
+  // Fetch presets and initial simulation on load
   useEffect(() => {
-    fetchPresets().then(async (data) => {
-      if (data?.workloads?.balanced_mix?.processes) {
-        const initialProcs = data.workloads.balanced_mix.processes;
+    async function initData() {
+      try {
+        setLoading(true);
+        const data = await fetchPresets();
+        setPresets(data);
+
+        // Fetch datasets citation info
+        fetchDatasetsInfo().then(info => setDatasetsInfo(info)).catch(() => {});
+
+        const initialProcs = data?.workloads?.spec_cpu_benchmarks?.processes 
+          || data?.workloads?.balanced_mix?.processes 
+          || [];
+
         setProcesses(initialProcs);
-        
-        // Auto simulate immediately on boot
-        try {
-          setLoading(true);
-          const simRes = await runSimulation({ processes: initialProcs, algorithm: "ecosched", time_quantum: 2 });
-          setSimulationResult(simRes);
-          const compRes = await runComparison({ processes: initialProcs, time_quantum: 2 });
-          setComparisonResult(compRes);
-        } catch (err) {
-          console.error("Auto-run failed:", err);
-        } finally {
-          setLoading(false);
-        }
+
+        const profileObj = getRenewableProfilePayload("caiso_real_solar_24h", data);
+
+        const simRes = await runSimulation({ 
+          processes: initialProcs, 
+          algorithm: "ecosched", 
+          time_quantum: 2,
+          renewable_profile: profileObj
+        });
+        setSimulationResult(simRes);
+
+        const compRes = await runComparison({ 
+          processes: initialProcs, 
+          time_quantum: 2,
+          renewable_profile: profileObj
+        });
+        setComparisonResult(compRes);
+      } catch (err: any) {
+        console.error("Initialization failed:", err);
+      } finally {
+        setLoading(false);
       }
-    });
+    }
+    initData();
   }, []);
+
+  const executeSimulationAndComparison = async (procs: ProcessInput[], algo: string, profileKey: string, quantum: number) => {
+    setLoading(true);
+    try {
+      const profileObj = getRenewableProfilePayload(profileKey, presets);
+
+      const simRes = await runSimulation({ 
+        processes: procs, 
+        algorithm: algo, 
+        time_quantum: quantum,
+        renewable_profile: profileObj 
+      });
+      setSimulationResult(simRes);
+
+      const compRes = await runComparison({ 
+        processes: procs, 
+        time_quantum: quantum,
+        renewable_profile: profileObj 
+      });
+      setComparisonResult(compRes);
+    } catch (err: any) {
+      alert(err?.message || "Simulation failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleWorkloadPresetChange = async (presetKey: string) => {
+    setSelectedWorkloadPreset(presetKey);
+    const targetProcs = presets?.workloads?.[presetKey]?.processes;
+    if (targetProcs) {
+      setProcesses(targetProcs);
+      await executeSimulationAndComparison(targetProcs, algorithm, selectedRenewableProfile, timeQuantum);
+    }
+  };
+
+  const handleRenewableProfileChange = async (profileKey: string) => {
+    setSelectedRenewableProfile(profileKey);
+    await executeSimulationAndComparison(processes, algorithm, profileKey, timeQuantum);
+  };
 
   const handleSimulate = async () => {
     setLoading(true);
     try {
-      const res = await runSimulation({ processes, algorithm, time_quantum: timeQuantum });
+      const profileObj = getRenewableProfilePayload(selectedRenewableProfile, presets);
+      const res = await runSimulation({ 
+        processes, 
+        algorithm, 
+        time_quantum: timeQuantum,
+        renewable_profile: profileObj 
+      });
       setSimulationResult(res);
       setActiveTab("charts");
     } catch (err: any) {
-      alert(err.message);
+      alert(err?.message || "Simulation failed.");
     } finally {
       setLoading(false);
     }
@@ -74,14 +153,19 @@ export default function App() {
   const handleCompareAll = async () => {
     setLoading(true);
     try {
-      const res = await runComparison({ processes, time_quantum: timeQuantum });
+      const profileObj = getRenewableProfilePayload(selectedRenewableProfile, presets);
+      const res = await runComparison({ 
+        processes, 
+        time_quantum: timeQuantum,
+        renewable_profile: profileObj 
+      });
       setComparisonResult(res);
-      if (res.results.ecosched) {
+      if (res.results?.ecosched) {
         setSimulationResult(res.results.ecosched);
       }
       setActiveTab("leaderboard");
     } catch (err: any) {
-      alert(err.message);
+      alert(err?.message || "Comparison failed.");
     } finally {
       setLoading(false);
     }
@@ -102,7 +186,7 @@ export default function App() {
       cpu_intensity: Number(newIntensity),
     };
     setProcesses([...processes, proc]);
-    setNewPid(`P${processes.length + 2}`);
+    setNewPid(`P${processes.length + 100}`);
   };
 
   const handleDeleteProcess = (pid: string) => {
@@ -121,10 +205,16 @@ export default function App() {
               <Leaf className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">
-                EcoSched Engine
-              </h1>
-              <p className="text-xs text-slate-400">Renewable-Aware & Thermal-Guarded CPU Simulator</p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">
+                  EcoSched Engine
+                </h1>
+                <span className="px-2.5 py-0.5 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-full text-[11px] font-semibold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  Real Traces Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">CAISO Solar Trace & SPEC CPU / Google Cluster Benchmarks</p>
             </div>
           </div>
         </div>
@@ -133,7 +223,7 @@ export default function App() {
           <button
             onClick={handleSimulate}
             disabled={loading}
-            className="flex-1 md:flex-none px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 text-sm shadow-sm"
+            className="flex-1 md:flex-none px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 text-sm shadow-sm disabled:opacity-50"
           >
             <Activity className="w-4 h-4 text-emerald-400" />
             {loading ? "Running..." : "Simulate Selected"}
@@ -141,7 +231,7 @@ export default function App() {
           <button
             onClick={handleCompareAll}
             disabled={loading}
-            className="flex-1 md:flex-none px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-xl transition shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 text-sm"
+            className="flex-1 md:flex-none px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-xl transition shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 text-sm disabled:opacity-50"
           >
             <Zap className="w-4 h-4" />
             Compare All Algorithms
@@ -197,14 +287,49 @@ export default function App() {
       {/* Main Grid: Controls + Visualizations */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Sidebar Controls (4 columns) */}
+        {/* Sidebar Controls */}
         <div className="lg:col-span-4 space-y-6">
           
+          {/* Real Dataset Preset Selector */}
+          <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-4">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-400" />
+              Real Data Presets
+            </h2>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Workload Benchmark</label>
+                <select
+                  value={selectedWorkloadPreset}
+                  onChange={(e) => handleWorkloadPresetChange(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="spec_cpu_benchmarks">SPEC CPU & OS Benchmarks (Real Data)</option>
+                  <option value="google_cluster_trace">Google Borg Cluster Trace</option>
+                  <option value="balanced_mix">Balanced Standard Mix</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Renewable Energy Profile</label>
+                <select
+                  value={selectedRenewableProfile}
+                  onChange={(e) => handleRenewableProfileChange(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="caiso_real_solar_24h">CAISO Real 24-Hour Solar Grid Trace</option>
+                  <option value="synthetic_solar">Synthetic Bell-Curve Solar</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* Algorithm Config */}
           <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-4">
             <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
               <Cpu className="w-4 h-4 text-emerald-400" />
-              Algorithm Selector
+              Policy & Parameters
             </h2>
             
             <div className="space-y-3">
@@ -213,7 +338,7 @@ export default function App() {
                 <select
                   value={algorithm}
                   onChange={(e) => setAlgorithm(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-emerald-500"
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
                 >
                   <option value="ecosched">EcoSched (Adaptive Green & Thermal)</option>
                   <option value="fcfs">First Come First Serve (FCFS)</option>
@@ -231,14 +356,14 @@ export default function App() {
                     min={1}
                     value={timeQuantum}
                     onChange={(e) => setTimeQuantum(Number(e.target.value))}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               )}
             </div>
           </div>
 
-          {/* Workload Queue & Add Process */}
+          {/* Workload Queue */}
           <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
@@ -247,7 +372,6 @@ export default function App() {
               </h2>
             </div>
 
-            {/* List */}
             <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
               {processes.map((p) => (
                 <div
@@ -291,7 +415,7 @@ export default function App() {
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <input
                   type="text"
-                  placeholder="PID (e.g. P6)"
+                  placeholder="PID"
                   value={newPid}
                   onChange={(e) => setNewPid(e.target.value)}
                   className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200"
@@ -331,18 +455,9 @@ export default function App() {
                   step="0.1"
                   min="0.1"
                   max="1.0"
-                  placeholder="CPU Load (0.1-1.0)"
+                  placeholder="CPU Load"
                   value={newIntensity}
                   onChange={(e) => setNewIntensity(Number(e.target.value))}
-                  className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200"
-                />
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  placeholder="Priority (1-10)"
-                  value={newPriority}
-                  onChange={(e) => setNewPriority(Number(e.target.value))}
                   className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200"
                 />
               </div>
@@ -350,20 +465,20 @@ export default function App() {
                 onClick={handleAddProcess}
                 className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold rounded-lg text-xs transition border border-slate-700"
               >
-                + Append to Queue
+                + Append Task to Queue
               </button>
             </div>
           </div>
         </div>
 
-        {/* Main Display Area (8 columns) */}
+        {/* Main Display Area */}
         <div className="lg:col-span-8 space-y-6">
           
           {/* Navigation Tabs */}
-          <div className="flex border-b border-slate-800 gap-2">
+          <div className="flex border-b border-slate-800 gap-2 overflow-x-auto">
             <button
               onClick={() => setActiveTab("charts")}
-              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition whitespace-nowrap ${
                 activeTab === "charts"
                   ? "border-emerald-500 text-emerald-400"
                   : "border-transparent text-slate-400 hover:text-slate-200"
@@ -373,7 +488,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("leaderboard")}
-              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition whitespace-nowrap ${
                 activeTab === "leaderboard"
                   ? "border-emerald-500 text-emerald-400"
                   : "border-transparent text-slate-400 hover:text-slate-200"
@@ -383,13 +498,23 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("decisions")}
-              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition ${
+              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition whitespace-nowrap ${
                 activeTab === "decisions"
                   ? "border-emerald-500 text-emerald-400"
                   : "border-transparent text-slate-400 hover:text-slate-200"
               }`}
             >
               <FileText className="w-4 h-4" /> Decision Audit Trail
+            </button>
+            <button
+              onClick={() => setActiveTab("datasets")}
+              className={`pb-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition whitespace-nowrap ${
+                activeTab === "datasets"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Database className="w-4 h-4" /> Dataset Citations
             </button>
           </div>
 
@@ -401,39 +526,66 @@ export default function App() {
             </div>
           )}
 
-          {/* Tab 2: Comparison Leaderboard */}
+          {/* Tab 2: Leaderboard */}
           {activeTab === "leaderboard" && (
             <div>
               {comparisonResult ? (
                 <ComparisonTable rows={comparisonResult.summary_table} />
               ) : (
                 <div className="p-12 text-center text-slate-500 border border-slate-800 rounded-2xl bg-slate-900/40">
-                  Click <strong>"Compare All Algorithms"</strong> at the top to compute evaluations across all 5 policies.
+                  Click <strong>"Compare All Algorithms"</strong> to compute multi-algorithm evaluations.
                 </div>
               )}
             </div>
           )}
 
-          {/* Tab 3: Decision Audit Trail */}
+          {/* Tab 3: Decision Log */}
           {activeTab === "decisions" && simulationResult && (
             <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-3">
-              <h3 className="text-sm font-semibold text-slate-200">Explainable Dispatch Log</h3>
+              <h3 className="text-sm font-semibold text-slate-200">Explainable Dynamic Score Log</h3>
               <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
                 {simulationResult.decision_log.map((log, i) => (
                   <div key={i} className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl text-xs flex justify-between items-start gap-4">
                     <div>
                       <div className="font-bold text-emerald-400 mb-0.5">
-                        t = {log.time}s — Selected PID: {log.selected_pid}
+                        t = {log.time}s — Selected Task: {log.selected_pid}
                       </div>
                       <div className="text-slate-300">{log.reason}</div>
                     </div>
                     {log.score !== null && (
                       <div className="px-2.5 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 rounded-lg font-mono font-bold">
-                        Score: {log.score}
+                        Utility: {log.score}
                       </div>
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 4: Dataset Citations */}
+          {activeTab === "datasets" && (
+            <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl space-y-4 text-xs">
+              <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-400" /> Real-World Benchmark Citations
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+                  <div className="font-bold text-emerald-400">California ISO (CAISO) Solar Trace</div>
+                  <p className="text-slate-400 leading-relaxed">
+                    {datasetsInfo?.datasets?.caiso_real_solar_24h?.citation 
+                      || "Real 24-hour solar generation power profile from California ISO open grid telemetry. Captures realistic zero-generation night periods, solar rise, peak noon generation, and rapid evening drop."}
+                  </p>
+                </div>
+
+                <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+                  <div className="font-bold text-emerald-400">SPEC CPU2017 & Linux Benchmarks</div>
+                  <p className="text-slate-400 leading-relaxed">
+                    {datasetsInfo?.datasets?.spec_cpu_benchmarks?.citation 
+                      || "Real execution metrics measured from standard OS benchmarks: FFmpeg H.264 transcoding, GCC kernel compilation, SQLite OLTP transactions, Blender Cycles rendering, and Redis memory cache lookups."}
+                  </p>
+                </div>
               </div>
             </div>
           )}
