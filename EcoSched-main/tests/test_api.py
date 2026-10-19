@@ -169,3 +169,23 @@ def test_cors_headers_present():
     res = client.get("/health", headers=headers)
     assert res.status_code == 200
     assert res.headers.get("access-control-allow-origin") in ["*", "http://localhost:3000"]
+
+
+def test_get_datasets_endpoint():
+    """Verify /api/datasets returns authentic real-world dataset documentation."""
+    res = client.get("/api/datasets")
+    assert res.status_code == 200
+    data = res.json()
+    assert "datasets" in data
+    dataset_ids = [d["id"] for d in data["datasets"]]
+    assert "caiso_real_solar_24h" in dataset_ids
+    assert "spec_cpu_benchmarks" in dataset_ids
+
+
+def test_real_world_presets_exist():
+    """Verify /api/examples returns SPEC CPU and CAISO solar real-world presets."""
+    res = client.get("/api/examples")
+    assert res.status_code == 200
+    data = res.json()
+    assert "spec_cpu_benchmarks" in data["workloads"]
+    assert "caiso_real_solar_24h" in data["renewable_profiles"]

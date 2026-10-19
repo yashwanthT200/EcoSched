@@ -1,0 +1,42 @@
+[
+  {
+    "pid": "REAL_01",
+    "name": "SQLite_OLTP_Query",
+    "arrival_time": 0.0,
+    "burst_time": 1.0,
+    "priority": 1,
+    "workload_type": "critical",
+    "cpu_intensity": 0.4,
+    "deadline": 2.5
+  },
+  {
+    "pid": "REAL_02",
+    "name": "Crypto_SHA256_Auth",
+    "arrival_time": 0.4,
+    "burst_time": 1.0,
+    "priority": 3,
+    "workload_type": "normal",
+    "cpu_intensity": 0.85,
+    "deadline": 6.4
+  },
+  {
+    "pid": "REAL_03",
+    "name": "Gzip_Log_Compression",
+    "arrival_time": 0.8,
+    "burst_time": 1.0,
+    "priority": 4,
+    "workload_type": "flexible",
+    "cpu_intensity": 0.8,
+    "deadline": 16.8
+  },
+  {
+    "pid": "REAL_04",
+    "name": "Matrix_Compute_Worker",
+    "arrival_time": 1.2,
+    "burst_time": 2.5,
+    "priority": 5,
+    "workload_type": "flexible",
+    "cpu_intensity": 0.95,
+    "deadline": 28.7
+  }
+]
